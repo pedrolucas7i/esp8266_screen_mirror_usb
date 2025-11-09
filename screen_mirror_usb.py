@@ -14,7 +14,7 @@ SCREEN_SIZE = (320, 240)       # Resolução para o ESP8266
 # =========================================================
 
 def capture_screen_ffmpeg():
-    """Captura 1 frame da tela via ffmpeg (funciona em X11, Wayland e SSH)."""
+    """Captura 1 frame da tela via ffmpeg (funciona em X11)."""
     cmd = [
         "ffmpeg",
         "-f", "x11grab",

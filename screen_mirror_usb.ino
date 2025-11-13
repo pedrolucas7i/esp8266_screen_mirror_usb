@@ -1,15 +1,17 @@
 #include <TJpg_Decoder.h>
 #include <TFT_eSPI.h>
 #include <SPI.h>
+#include <user_interface.h>
 
-TFT_eSPI tft = TFT_eSPI();   // Objeto do display
+TFT_eSPI tft = TFT_eSPI();
 
-#define JPEG_BUFFER_SIZE (40*1024)
-uint8_t *jpeg_buffer = NULL;
-uint32_t jpeg_buffer_pos = 0;
-uint32_t expected_jpeg_size = 0;
+#define JPEG_BUFFER_SIZE (40*1024)  // Adjust according to available RAM
+#define CHUNK_TIMEOUT 200           // ms
 
-// Callback do TJpg_Decoder
+uint8_t *buffer = NULL;
+uint32_t expected_frame_size = 0;
+
+// TJpg_Decoder callback
 bool tft_output(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t *bitmap) {
   if (y >= tft.height()) return false;
   tft.pushImage(x, y, w, h, bitmap);
@@ -17,16 +19,16 @@ bool tft_output(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t *bitmap) 
 }
 
 void setup() {
-  Serial.begin(921600);
+  SPI.setFrequency(60000000);
+  Serial.begin(2000000);   // High-speed serial (1.5 Mbps)
   tft.init();
   tft.setRotation(1);
   tft.fillScreen(TFT_BLACK);
 
-  // Aloca buffer JPEG
-  jpeg_buffer = (uint8_t *)malloc(JPEG_BUFFER_SIZE);
-  if (jpeg_buffer == NULL) {
-    Serial.println("Error: Failed to allocate buffer!");
-    while (1);
+  buffer = (uint8_t*)malloc(JPEG_BUFFER_SIZE);
+  if (!buffer) {
+    Serial.println("ERROR: Failed to allocate buffer!");
+    while(1);
   }
 
   TJpgDec.setJpgScale(1);
@@ -36,38 +38,58 @@ void setup() {
   tft.setTextColor(TFT_WHITE);
   tft.setCursor(10, 10);
   tft.println("Serial screen ready!");
+
+  system_update_cpu_freq(160);  // 160 MHz CPU
+}
+
+// Read frame header like "JPEG_FRAME_SIZE:12345"
+bool read_frame_header(uint32_t &size) {
+  char line[32];
+  if (Serial.readBytesUntil('\n', line, sizeof(line)-1) <= 0) return false;
+  line[strcspn(line, "\r\n")] = 0;
+  if (strncmp(line, "JPEG_FRAME_SIZE:", 16) == 0) {
+    size = atoi(line + 16);
+    return true;
+  }
+  return false;
+}
+
+// Receive full frame in chunks
+bool receive_frame(uint8_t *buf, uint32_t size, uint32_t timeout_ms = CHUNK_TIMEOUT) {
+  uint32_t pos = 0;
+  uint32_t start = millis();
+  while (pos < size) {
+    int avail = Serial.available();
+    if (avail > 0) {
+      if (avail > size - pos) avail = size - pos;
+      Serial.readBytes(buf + pos, avail);
+      pos += avail;
+      start = millis();  // reset timeout
+    }
+    if (millis() - start > timeout_ms) return false;
+    yield();
+  }
+  return true;
 }
 
 void loop() {
-  // Verifica se recebemos a linha com tamanho JPEG
   if (Serial.available()) {
-    String line = Serial.readStringUntil('\n');
-    line.trim();
-    if (line.startsWith("JPEG_FRAME_SIZE:")) {
-      expected_jpeg_size = line.substring(16).toInt();
-      jpeg_buffer_pos = 0;
-
-      if (expected_jpeg_size > JPEG_BUFFER_SIZE) {
-        Serial.println("ERR:TOO_LARGE");
-        expected_jpeg_size = 0;
-        return;
-      }
-
-      // Aguarda todos os bytes do JPEG
-      uint32_t start = millis();
-      while (jpeg_buffer_pos < expected_jpeg_size && millis() - start < 3000) {
-        while (Serial.available() && jpeg_buffer_pos < expected_jpeg_size) {
-          jpeg_buffer[jpeg_buffer_pos++] = Serial.read();
-        }
-        yield(); // permite outras tarefas
-      }
-
-      if (jpeg_buffer_pos == expected_jpeg_size) {
-        TJpgDec.drawJpg(0, 0, jpeg_buffer, expected_jpeg_size);
-        Serial.println("FRAME_DONE");
-      } else {
-        Serial.println("ERR:TIMEOUT");
-      }
+    if (!read_frame_header(expected_frame_size)) return;
+    if (expected_frame_size > JPEG_BUFFER_SIZE) {
+      Serial.println("ERR:TOO_LARGE");
+      return;
     }
+
+    // Receive frame in chunks
+    if (!receive_frame(buffer, expected_frame_size)) {
+      Serial.println("ERR:TIMEOUT");
+      return;
+    }
+
+    // Decode and display
+    TJpgDec.drawJpg(0, 0, buffer, expected_frame_size);
+
+    // ACK to sender
+    Serial.println("FRAME_DONE");
   }
 }

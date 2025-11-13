@@ -12,7 +12,7 @@ except Exception:
     jpeg_encoder = None
 
 # ===================== CONFIGURATION =====================
-BAUD_RATE = 921600             # Must match the ESP8266 code
+BAUD_RATE = 2000000            # Must match the ESP8266 code
 JPEG_QUALITY = 50              # 30–80 recommended for smooth transmission
 TARGET_FPS = 20                # ESP8266 can usually handle 10–20 FPS
 CHUNK_SIZE = 2048              # Size of serial transmission chunks

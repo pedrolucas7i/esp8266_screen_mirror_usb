@@ -17,7 +17,7 @@ bool tft_output(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t *bitmap) 
 }
 
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(921600);
   tft.init();
   tft.setRotation(1);
   tft.fillScreen(TFT_BLACK);
